@@ -5,72 +5,86 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; color: white; text-align: center; font-family: sans-serif; }
-        canvas { position: absolute; left: 0; top: 0; }
-        video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
-        #log { position: absolute; top: 10px; width: 100%; z-index: 100; background: rgba(0,0,0,0.5); }
+        body { margin: 0; background: #000; overflow: hidden; }
+        canvas { position: absolute; left: 0; top: 0; width: 100vw; height: 100vh; object-fit: cover; }
+        video { display: none; } /* אנחנו לא צריכים לראות את הוידאו המקורי, רק את הקנבס */
+        #ui { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 15px; z-index: 100; }
+        button { padding: 15px 25px; border-radius: 30px; border: 2px solid #0f0; background: rgba(0,0,0,0.8); color: #0f0; font-weight: bold; font-size: 16px; }
     </style>
 </head>
 <body>
-    <div id="log">טוען מודלים...</div>
     <video id="video" playsinline autoplay muted></video>
     <canvas id="canvas"></canvas>
+    <div id="ui">
+        <button onclick="mirrorSide='left'">שכפל שמאל</button>
+        <button onclick="mirrorSide='right'">שכפל ימין</button>
+    </div>
 
 <script>
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
-const log = document.getElementById('log');
+const ctx = canvas.getContext('2d');
+let mirrorSide = 'left';
 
 async function setup() {
-    log.innerText = "טוען AI...";
-    // טעינת המודלים ישירות משרת חיצוני
     await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/');
     await faceapi.nets.faceLandmark68Net.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/');
     
-    log.innerText = "מבקש מצלמה...";
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
     video.srcObject = stream;
 
     video.onloadedmetadata = () => {
-        canvas.width = video.offsetWidth;
-        canvas.height = video.offsetHeight;
-        log.innerText = "מחפש פנים - גע במסך!";
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
         detect();
     };
 }
 
 async function detect() {
-    const displaySize = { width: video.offsetWidth, height: video.offsetHeight };
-    faceapi.matchDimensions(canvas, displaySize);
-
     setInterval(async () => {
         const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
-        const resizedDetections = faceapi.resizeResults(detections, displaySize);
         
-        const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         if (detections.length > 0) {
-            log.style.display = 'none';
-            // ציור נקודות הפנים
-            faceapi.draw.drawFaceLandmarks(canvas, resizedDetections);
-            
-            // ציור קו האף (ציר הסימטריה)
             const landmarks = detections[0].landmarks;
             const nose = landmarks.getNose();
-            const topNose = nose[0]; // הנקודה העליונה של האף
+            const nx = nose[0].x; // מיקום האף (ציר ה-X)
             
+            const vW = video.videoWidth;
+            const vH = video.videoHeight;
+
+            if (mirrorSide === 'left') {
+                // 1. מצייר את חצי הפנים השמאלי (מהקצה עד האף)
+                ctx.drawImage(video, 0, 0, nx, vH, 0, 0, nx, vH);
+                
+                // 2. משקף את אותו החצי לצד ימין
+                ctx.save();
+                ctx.translate(nx * 2, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, 0, 0, nx, vH, 0, 0, nx, vH);
+                ctx.restore();
+            } else {
+                // 1. מצייר את חצי הפנים הימני (מהאף עד הקצה)
+                const rightPartW = vW - nx;
+                ctx.drawImage(video, nx, 0, rightPartW, vH, nx, 0, rightPartW, vH);
+                
+                // 2. משקף את אותו החצי לצד שמאל
+                ctx.save();
+                ctx.translate(nx * 2, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, nx, 0, rightPartW, vH, nx, 0, rightPartW, vH);
+                ctx.restore();
+            }
+
+            // קו ירוק דק על ציר הסימטריה
             ctx.strokeStyle = '#00ff00';
-            ctx.lineWidth = 5;
+            ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.moveTo(topNose.x * (canvas.width/video.videoWidth), 0);
-            ctx.lineTo(topNose.x * (canvas.width/video.videoWidth), canvas.height);
+            ctx.moveTo(nx, 0); ctx.lineTo(nx, canvas.height);
             ctx.stroke();
-        } else {
-            log.style.display = 'block';
-            log.innerText = "לא מזהה פנים - תתקרב למצלמה";
         }
-    }, 100);
+    }, 40); // 25 פריימים בשנייה לעבודה חלקה
 }
 
 document.body.addEventListener('click', () => video.play());
